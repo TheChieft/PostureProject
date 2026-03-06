@@ -50,7 +50,8 @@ _stop_event = threading.Event()
 
 def worker_loop(overlay: OverlayWindow,
                 camera_index: int,
-                debug: bool):
+                debug: bool,
+                preview: bool = False):
     """
     Runs in a background thread.
     Owns Camera, PoseDetector, PostureScorer, Calibrator, StateMachine,
@@ -62,6 +63,8 @@ def worker_loop(overlay: OverlayWindow,
         _stop_event.set()
         overlay.close()
         return
+
+    import cv2 as _cv2  # local import to keep top-level imports clean
 
     with cam, PoseDetector() as detector, PostureLogger() as csv_logger:
 
@@ -84,6 +87,24 @@ def worker_loop(overlay: OverlayWindow,
                 continue
 
             landmarks = detector.process(frame)
+
+            # ---- Preview window ----
+            if preview:
+                display = frame.copy()
+                if landmarks is not None:
+                    h_px, w_px = display.shape[:2]
+                    for pt in [landmarks.left_ear, landmarks.right_ear,
+                               landmarks.left_shoulder, landmarks.right_shoulder]:
+                        cx, cy = int(pt[0] * w_px), int(pt[1] * h_px)
+                        _cv2.circle(display, (cx, cy), 5, (0, 255, 0), -1)
+                phase = "CAL" if not calibrator.is_done else machine.state.name
+                _cv2.putText(display, phase, (10, 28),
+                             _cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                _cv2.imshow("PostureProject - Preview", display)
+                if _cv2.waitKey(1) & 0xFF == ord('q'):
+                    _stop_event.set()
+                    break
+
             if landmarks is None:
                 continue
 
@@ -123,6 +144,9 @@ def worker_loop(overlay: OverlayWindow,
                 )
                 last_log_time = now
 
+    if preview:
+        import cv2 as _cv2
+        _cv2.destroyAllWindows()
     _log.info("Worker thread finished.")
     overlay.close()
 
@@ -139,13 +163,21 @@ def main():
         "--debug", action="store_true",
         help="Show score/FPS overlay on the bar (development mode)"
     )
+    parser.add_argument(
+        "--preview", action="store_true",
+        help="Show camera feed window with landmark dots (press Q to quit)"
+    )
+    parser.add_argument(
+        "--bar-x", type=int, default=0,
+        help="X pixel offset for the overlay bar (use to place on a second monitor)"
+    )
     args = parser.parse_args()
 
-    overlay = OverlayWindow(debug=args.debug)
+    overlay = OverlayWindow(debug=args.debug, x_offset=args.bar_x)
 
     worker = threading.Thread(
         target=worker_loop,
-        args=(overlay, args.camera, args.debug),
+        args=(overlay, args.camera, args.debug, args.preview),
         daemon=True,
         name="PostureWorker",
     )

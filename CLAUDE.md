@@ -4,40 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Environment
 
-- Development is done in **WSL (Ubuntu-24.04)**; execution is on **Windows** (Conda, Python 3.11 x64, Snapdragon X ARM).
+- Development is done in **WSL (Ubuntu-24.04)**; execution is on **Windows** (Python 3.11 x64 from python.org, Snapdragon X ARM).
 - The `.conda/` and `.venv/` directories are local environments — ignore them.
 - Source files live at the repo root (no subdirectory nesting).
+- **Do not use the Windows Store Python** (`C:\Users\...\WindowsApps\python.exe`) — it is Python 3.13 and mediapipe does not support it. Use `py -3.11` (the Python Launcher) to target the correct version.
 
 ## Running the application
 
-The program must run with **Windows Python** (Conda) because it needs the Windows webcam and Tkinter display.
+The program must run with **Windows Python 3.11** because it needs the Windows webcam and Tkinter display.
 
 ### First-time setup (PowerShell)
+
+Requires **Python 3.11 ARM64** installed from python.org (not the Windows Store version).
+
+> **Do NOT use a venv** — activating scripts over UNC paths (`\\wsl.localhost\...`) fails in Windows. Install directly into the system Python 3.11.
 
 ```powershell
 cd \\wsl.localhost\Ubuntu-24.04\home\thechieft\projects\PostureProject
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies — --only-binary :all: avoids source builds (no compiler needed)
+py -3.11 -m pip install --only-binary :all: -r requirements.txt
 
-# Download the MediaPipe pose model (~5 MB, stored locally, not committed to git)
-python download_model.py
+# Download the MediaPipe pose model (~5 MB, not committed to git)
+py -3.11 download_model.py
 ```
 
 ### Running
 
 ```powershell
 cd \\wsl.localhost\Ubuntu-24.04\home\thechieft\projects\PostureProject
-python main.py
-python main.py --camera 1 --debug
+py -3.11 main.py
+py -3.11 main.py --camera 1 --debug
 ```
 
 ### mediapipe Notes
 
-- On Windows ARM (Snapdragon X), only `mediapipe>=0.10.30` is available via pip.
+- On Windows ARM (Snapdragon X), only `mediapipe>=0.10.30` is available via pip — older versions have no Windows ARM wheels.
 - These versions dropped the legacy `mp.solutions` API — `pose.py` uses the Tasks API (`mp.tasks.vision.PoseLandmarker`) instead.
 - `requirements.txt` pins `mediapipe==0.10.30`.
-- The Tasks API requires a `.task` model file — download it with `download_model.py`. The file is excluded from git (`.gitignore`).
+- The Tasks API requires `pose_landmarker_lite.task` in the project root — download it with `download_model.py`. Excluded from git via `.gitignore`.
 
 ## Architecture
 

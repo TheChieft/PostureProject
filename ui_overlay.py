@@ -64,8 +64,9 @@ class OverlayWindow:
     on the left edge.  It draws onto a Canvas.
     """
 
-    def __init__(self, debug: bool = False):
+    def __init__(self, debug: bool = False, x_offset: int = 0):
         self.debug = debug
+        self._x_offset = x_offset
         self._root: tk.Tk | None = None
         self._canvas: tk.Canvas | None = None
 
@@ -90,8 +91,8 @@ class OverlayWindow:
         self._screen_w = self._root.winfo_screenwidth()
         self._screen_h = self._root.winfo_screenheight()
 
-        # Window geometry: narrow strip, full height, left edge
-        self._root.geometry(f"{BAR_WIDTH}x{self._screen_h}+{MARGIN}+0")
+        # Window geometry: narrow strip, full height, at x_offset
+        self._root.geometry(f"{BAR_WIDTH}x{self._screen_h}+{self._x_offset + MARGIN}+0")
         self._root.overrideredirect(True)        # No title bar
         self._root.attributes("-topmost", True)  # Always on top
         self._root.attributes("-alpha", 0.85)    # Slight transparency

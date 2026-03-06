@@ -34,7 +34,7 @@ class Camera:
         self._last_frame_time = 0.0
         self._actual_fps = 0.0
         self._frame_count = 0
-        self._fps_timer = time.time()
+        self._fps_timer = time.monotonic()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -117,7 +117,6 @@ class Camera:
     # ------------------------------------------------------------------
 
     def __enter__(self):
-        self.open()
         return self
 
     def __exit__(self, *_):
