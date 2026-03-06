@@ -4,17 +4,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Environment
 
-- Python 3.11 x64, Windows 11 (Snapdragon X ARM). The `.conda/` and `.venv/` directories are local environments — ignore them.
-- The actual source lives in `PostureProject/` (the inner directory).
+- Development is done in **WSL (Ubuntu-24.04)**; execution is on **Windows** (Conda, Python 3.11 x64, Snapdragon X ARM).
+- The `.conda/` and `.venv/` directories are local environments — ignore them.
+- Source files live at the repo root (no subdirectory nesting).
 
 ## Running the application
 
-```bash
-cd PostureProject
+The program must run with **Windows Python** (Conda) because it needs the Windows webcam and Tkinter display.
+
+### First-time setup (PowerShell)
+
+```powershell
+cd \\wsl.localhost\Ubuntu-24.04\home\thechieft\projects\PostureProject
+
+# Install dependencies
 pip install -r requirements.txt
-python main.py
-python main.py --camera 1 --debug   # alternate camera + debug overlay
+
+# Download the MediaPipe pose model (~5 MB, stored locally, not committed to git)
+python download_model.py
 ```
+
+### Running
+
+```powershell
+cd \\wsl.localhost\Ubuntu-24.04\home\thechieft\projects\PostureProject
+python main.py
+python main.py --camera 1 --debug
+```
+
+### mediapipe Notes
+
+- On Windows ARM (Snapdragon X), only `mediapipe>=0.10.30` is available via pip.
+- These versions dropped the legacy `mp.solutions` API — `pose.py` uses the Tasks API (`mp.tasks.vision.PoseLandmarker`) instead.
+- `requirements.txt` pins `mediapipe==0.10.30`.
+- The Tasks API requires a `.task` model file — download it with `download_model.py`. The file is excluded from git (`.gitignore`).
 
 ## Architecture
 

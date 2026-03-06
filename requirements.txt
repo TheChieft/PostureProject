@@ -5,6 +5,6 @@
 # Tkinter is bundled with the official CPython Windows installer.
 
 opencv-python>=4.9.0
-mediapipe>=0.10.9
+mediapipe==0.10.30
 numpy>=1.26.0
 psutil>=5.9.0     # optional CPU monitoring
