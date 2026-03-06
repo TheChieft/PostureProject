@@ -14,13 +14,13 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from pathlib import Path
-
 import cv2
 import numpy as np
 import mediapipe as mp
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
+
+from paths import model_path
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ RIGHT_EAR_IDX      = 8
 LEFT_SHOULDER_IDX  = 11
 RIGHT_SHOULDER_IDX = 12
 
-MODEL_PATH = Path(__file__).parent / "pose_landmarker_lite.task"
+MODEL_PATH = model_path()
 
 
 @dataclass

@@ -20,11 +20,12 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from paths import logs_dir
 from state_machine import PostureState
 
 logger = logging.getLogger(__name__)
 
-LOG_DIR = Path("logs")
+LOG_DIR = logs_dir()
 MAX_ROWS_PER_FILE = 50_000   # Rotate after ~50 k rows (~8 h at 2 Hz)
 
 _FIELDNAMES = [
