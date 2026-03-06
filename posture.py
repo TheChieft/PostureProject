@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Default weights
 W1 = 0.5   # Head-forward contribution
 W2 = 0.5   # Neck-angle contribution
-EMA_ALPHA = 0.3
+EMA_ALPHA = 0.45
 
 
 @dataclass

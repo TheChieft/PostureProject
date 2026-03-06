@@ -64,7 +64,9 @@ def worker_loop(overlay: OverlayWindow,
         overlay.close()
         return
 
-    import cv2 as _cv2  # local import to keep top-level imports clean
+    import cv2 as _cv2
+    import psutil
+    import winsound
 
     with cam, PoseDetector() as detector, PostureLogger() as csv_logger:
 
@@ -80,6 +82,16 @@ def worker_loop(overlay: OverlayWindow,
         log_interval = 0.5        # Seconds between CSV rows (≈ 2 Hz)
         last_log_time = 0.0
 
+        # RED alert beep tracking
+        _red_since: float | None = None
+        _beep_fired = False
+
+        # Resource stats (updated every second to avoid overhead)
+        _cpu_pct = 0.0
+        _ram_pct = 0.0
+        _last_stats_time = 0.0
+        psutil.cpu_percent()  # first call always returns 0.0; prime the counter
+
         while not _stop_event.is_set():
             frame, ts = cam.read_frame()
             if frame is None:
@@ -91,15 +103,39 @@ def worker_loop(overlay: OverlayWindow,
             # ---- Preview window ----
             if preview:
                 display = frame.copy()
+                h_px, w_px = display.shape[:2]
+
                 if landmarks is not None:
-                    h_px, w_px = display.shape[:2]
                     for pt in [landmarks.left_ear, landmarks.right_ear,
                                landmarks.left_shoulder, landmarks.right_shoulder]:
                         cx, cy = int(pt[0] * w_px), int(pt[1] * h_px)
                         _cv2.circle(display, (cx, cy), 5, (0, 255, 0), -1)
+
+                # Update resource stats once per second
+                now_s = time.monotonic()
+                if now_s - _last_stats_time >= 1.0:
+                    _cpu_pct = psutil.cpu_percent()
+                    _ram_pct = psutil.virtual_memory().percent
+                    _last_stats_time = now_s
+
+                fps_now = cam.actual_fps
                 phase = "CAL" if not calibrator.is_done else machine.state.name
-                _cv2.putText(display, phase, (10, 28),
+
+                # State label — top left
+                _cv2.putText(display, phase, (10, 30),
                              _cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+
+                # Stats — bottom left
+                stats_lines = [
+                    f"FPS: {fps_now:.1f}",
+                    f"CPU: {_cpu_pct:.0f}%",
+                    f"RAM: {_ram_pct:.0f}%",
+                ]
+                for i, line in enumerate(stats_lines):
+                    y = h_px - 12 - (len(stats_lines) - 1 - i) * 22
+                    _cv2.putText(display, line, (10, y),
+                                 _cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+
                 _cv2.imshow("PostureProject - Preview", display)
                 if _cv2.waitKey(1) & 0xFF == ord('q'):
                     _stop_event.set()
@@ -132,8 +168,23 @@ def worker_loop(overlay: OverlayWindow,
 
             overlay.update_posture(state, result.smoothed_score, fps)
 
-            # CSV logging at reduced rate to keep I/O light
+            # ---- RED alert beep (after 10 s sustained RED) ----
             now = time.monotonic()
+            if state == PostureState.RED:
+                if _red_since is None:
+                    _red_since = now
+                elif not _beep_fired and (now - _red_since) >= 10.0:
+                    threading.Thread(
+                        target=lambda: winsound.Beep(880, 600),
+                        daemon=True,
+                    ).start()
+                    _beep_fired = True
+                    _log.warning("RED alert: sustained bad posture > 10 s")
+            else:
+                _red_since = None
+                _beep_fired = False
+
+            # CSV logging at reduced rate to keep I/O light
             if now - last_log_time >= log_interval:
                 csv_logger.log(
                     score=result.smoothed_score,
@@ -145,7 +196,6 @@ def worker_loop(overlay: OverlayWindow,
                 last_log_time = now
 
     if preview:
-        import cv2 as _cv2
         _cv2.destroyAllWindows()
     _log.info("Worker thread finished.")
     overlay.close()

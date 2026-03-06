@@ -22,9 +22,9 @@ from enum import Enum, auto
 logger = logging.getLogger(__name__)
 
 # Time thresholds (seconds)
-YELLOW_TIME_THRESHOLD = 15.0
-RED_TIME_THRESHOLD = 30.0
-RECOVERY_TIME = 3.0   # Must be good for this long to reset to GREEN
+YELLOW_TIME_THRESHOLD = 5.0
+RED_TIME_THRESHOLD = 10.0
+RECOVERY_TIME = 2.0   # Must be good for this long to reset to GREEN
 
 
 class PostureState(Enum):
