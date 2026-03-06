@@ -32,6 +32,7 @@ TIMELINE_SECONDS = 600   # 10 minutes of visible history
 UPDATE_MS = 500           # Dashboard refresh rate (ms)
 BG = "#16213E"
 BG2 = "#0F1826"
+PAUSE_COLOR = "#4A4A6A"  # Grey-blue segment shown while session is paused
 
 
 class DashboardWindow:
@@ -57,6 +58,7 @@ class DashboardWindow:
         self._events: list[tuple[float, PostureState]] = []
         self._session_start: float | None = None
         self._paused = False
+        self._paused_since: float | None = None  # monotonic time when pause started
 
         # Tk widgets (created in start())
         self._win: tk.Toplevel | None = None
@@ -91,6 +93,11 @@ class DashboardWindow:
         """Thread-safe.  Call from worker on every state transition."""
         with self._lock:
             self._events.append((time.monotonic(), state))
+
+    def set_paused(self, paused: bool) -> None:
+        """Thread-safe.  Stores pause start time for timeline rendering."""
+        with self._lock:
+            self._paused_since = time.monotonic() if paused else None
 
     def close(self) -> None:
         """Destroy the window.  Safe to call from any thread."""
@@ -153,7 +160,7 @@ class DashboardWindow:
                    padx=14, pady=7, cursor="hand2")
 
         tk.Button(ctrl, text="Recalibrar", bg="#2471A3", fg="white",
-                  command=self._on_recalibrate, **btn).pack(side="left", padx=6)
+                  command=self._click_recalibrate, **btn).pack(side="left", padx=6)
         self._pause_btn = tk.Button(ctrl, text="Pausar", bg="#CA6F1E", fg="white",
                                      command=self._toggle_pause, **btn)
         self._pause_btn.pack(side="left", padx=6)
@@ -203,10 +210,17 @@ class DashboardWindow:
         c.delete("all")
         W, H = 448, 28
         win_start = now - TIMELINE_SECONDS
+
+        with self._lock:
+            paused_since = self._paused_since
+
+        # When paused, real segments stop at pause time; grey fills the rest
+        effective_now = paused_since if paused_since is not None else now
+
         c.create_rectangle(0, 0, W, H, fill=BG2, outline="")
 
         for i, (ts, state) in enumerate(events):
-            seg_end = events[i + 1][0] if i + 1 < len(events) else now
+            seg_end = events[i + 1][0] if i + 1 < len(events) else effective_now
             if seg_end < win_start:
                 continue
             x0 = max(0.0, (ts - win_start) / TIMELINE_SECONDS * W)
@@ -214,6 +228,16 @@ class DashboardWindow:
             if x1 > x0:
                 c.create_rectangle(x0, 3, x1, H - 3,
                                    fill=STATE_COLORS[state], outline="")
+
+        # Pause segment (grey-blue from pause_start to now)
+        if paused_since is not None:
+            x0 = max(0.0, (paused_since - win_start) / TIMELINE_SECONDS * W)
+            x1 = min(float(W), (now - win_start) / TIMELINE_SECONDS * W)
+            if x1 > x0:
+                c.create_rectangle(x0, 3, x1, H - 3, fill=PAUSE_COLOR, outline="")
+                if x1 - x0 > 30:
+                    c.create_text((x0 + x1) / 2, H // 2, text="PAUSA",
+                                  fill="#AAA", font=("Consolas", 7, "bold"))
 
         # Tick marks at 2, 5, 8 minutes ago
         for mins_ago in (2, 5, 8):
@@ -247,9 +271,22 @@ class DashboardWindow:
 
     def _toggle_pause(self) -> None:
         self._paused = not self._paused
+        self._update_pause_btn()
+        self.set_paused(self._paused)
+        self._on_pause(self._paused)
+
+    def _click_recalibrate(self) -> None:
+        """Recalibrate: also resumes if currently paused."""
+        if self._paused:
+            self._paused = False
+            self._update_pause_btn()
+            self.set_paused(False)
+            self._on_pause(False)
+        self._on_recalibrate()
+
+    def _update_pause_btn(self) -> None:
         if self._pause_btn:
             self._pause_btn.config(
                 text="Reanudar" if self._paused else "Pausar",
                 bg="#1E8449" if self._paused else "#CA6F1E",
             )
-        self._on_pause(self._paused)

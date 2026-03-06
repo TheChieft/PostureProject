@@ -87,8 +87,8 @@ def worker_loop(overlay: OverlayWindow,
         last_log_time = 0.0
         _prev_state: PostureState | None = None
 
-        # RED alert beep tracking
-        _red_since: float | None = None
+        # Bad posture beep tracking (YELLOW or RED sustained)
+        _bad_since: float | None = None
         _beep_stop: threading.Event | None = None
 
         def _start_beep_loop(stop_event: threading.Event):
@@ -121,7 +121,7 @@ def worker_loop(overlay: OverlayWindow,
                 if _beep_stop is not None:
                     _beep_stop.set()
                     _beep_stop = None
-                _red_since = None
+                _bad_since = None
                 overlay.update_calibration(0.0, 0)
                 _log.info("Recalibration started.")
 
@@ -205,24 +205,24 @@ def worker_loop(overlay: OverlayWindow,
                 dashboard.add_event(state)
                 _prev_state = state
 
-            # ---- RED alert beep (continuous after 8 s in RED) ----
+            # ---- Beep: continuous after 8 s in YELLOW or RED ----
             now = time.monotonic()
-            if state == PostureState.RED:
-                if _red_since is None:
-                    _red_since = now
-                elif _beep_stop is None and (now - _red_since) >= 8.0:
+            if state in (PostureState.YELLOW, PostureState.RED):
+                if _bad_since is None:
+                    _bad_since = now
+                elif _beep_stop is None and (now - _bad_since) >= 8.0:
                     _beep_stop = threading.Event()
                     threading.Thread(
                         target=_start_beep_loop,
                         args=(_beep_stop,),
                         daemon=True,
                     ).start()
-                    _log.warning("RED alert: sustained bad posture > 8 s")
+                    _log.warning("Alert: sustained bad posture > 8 s (%s)", state.name)
             else:
                 if _beep_stop is not None:
                     _beep_stop.set()
                     _beep_stop = None
-                _red_since = None
+                _bad_since = None
 
             # CSV logging at reduced rate to keep I/O light
             if now - last_log_time >= log_interval:
@@ -265,9 +265,15 @@ def main():
 
     overlay = OverlayWindow(debug=args.debug, x_offset=args.bar_x)
 
+    def _on_pause(paused: bool) -> None:
+        if paused:
+            _pause_event.set()
+        else:
+            _pause_event.clear()
+
     dashboard = DashboardWindow(
-        on_recalibrate=lambda: _recalibrate_event.set(),
-        on_pause=lambda paused: _pause_event.set() if paused else _pause_event.clear(),
+        on_recalibrate=lambda: (_recalibrate_event.set(), _pause_event.clear()),
+        on_pause=_on_pause,
         on_stop=lambda: (_stop_event.set(), overlay.close()),
     )
 
