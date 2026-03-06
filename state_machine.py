@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Time thresholds (seconds)
 YELLOW_TIME_THRESHOLD = 5.0
-RED_TIME_THRESHOLD = 10.0
+RED_TIME_THRESHOLD = 7.0
 RECOVERY_TIME = 2.0   # Must be good for this long to reset to GREEN
 
 

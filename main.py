@@ -84,7 +84,13 @@ def worker_loop(overlay: OverlayWindow,
 
         # RED alert beep tracking
         _red_since: float | None = None
-        _beep_fired = False
+        _beep_stop: threading.Event | None = None
+
+        def _start_beep_loop(stop_event: threading.Event):
+            """Beeps repeatedly until stop_event is set."""
+            while not stop_event.is_set():
+                winsound.Beep(880, 500)
+                stop_event.wait(0.6)  # 0.6 s gap between beeps
 
         # Resource stats (updated every second to avoid overhead)
         _cpu_pct = 0.0
@@ -168,21 +174,24 @@ def worker_loop(overlay: OverlayWindow,
 
             overlay.update_posture(state, result.smoothed_score, fps)
 
-            # ---- RED alert beep (after 10 s sustained RED) ----
+            # ---- RED alert beep (continuous after 8 s in RED) ----
             now = time.monotonic()
             if state == PostureState.RED:
                 if _red_since is None:
                     _red_since = now
-                elif not _beep_fired and (now - _red_since) >= 10.0:
+                elif _beep_stop is None and (now - _red_since) >= 8.0:
+                    _beep_stop = threading.Event()
                     threading.Thread(
-                        target=lambda: winsound.Beep(880, 600),
+                        target=_start_beep_loop,
+                        args=(_beep_stop,),
                         daemon=True,
                     ).start()
-                    _beep_fired = True
-                    _log.warning("RED alert: sustained bad posture > 10 s")
+                    _log.warning("RED alert: sustained bad posture > 8 s")
             else:
+                if _beep_stop is not None:
+                    _beep_stop.set()
+                    _beep_stop = None
                 _red_since = None
-                _beep_fired = False
 
             # CSV logging at reduced rate to keep I/O light
             if now - last_log_time >= log_interval:

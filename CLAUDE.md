@@ -86,9 +86,10 @@ smoothed_S = 0.3 * S + 0.7 * smoothed_S_prev   # EMA, alpha=0.3
 ```
 
 State thresholds (relative to calibration baseline):
-- YELLOW: score > baseline × 1.15 for > 15 s
-- RED: score > baseline × 1.30 for > 30 s
-- GREEN recovery: score below yellow threshold for > 3 s
+- YELLOW: score > baseline × 1.15 for > 5 s
+- RED: score > baseline × 1.30 for > 7 s
+- GREEN recovery: score below yellow threshold for > 2 s
+- RED alert beep: continuous `winsound.Beep(880, 500)` loop starts after 8 s in RED; stops immediately on recovery
 
 After calibration completes, `PostureScorer.reset()` is called to clear the EMA so monitoring starts fresh.
 
