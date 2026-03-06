@@ -26,6 +26,7 @@ import time
 
 from camera import Camera
 from calibrator import Calibrator
+from dashboard import DashboardWindow
 from logger import PostureLogger
 from pose import PoseDetector
 from posture import PostureScorer
@@ -43,12 +44,15 @@ logging.basicConfig(
 _log = logging.getLogger("main")
 
 # ------------------------------------------------------------------
-# Shared state between worker and UI thread
+# Shared events between worker / UI / dashboard
 # ------------------------------------------------------------------
 _stop_event = threading.Event()
+_recalibrate_event = threading.Event()
+_pause_event = threading.Event()
 
 
 def worker_loop(overlay: OverlayWindow,
+                dashboard: DashboardWindow,
                 camera_index: int,
                 debug: bool,
                 preview: bool = False):
@@ -81,6 +85,7 @@ def worker_loop(overlay: OverlayWindow,
 
         log_interval = 0.5        # Seconds between CSV rows (≈ 2 Hz)
         last_log_time = 0.0
+        _prev_state: PostureState | None = None
 
         # RED alert beep tracking
         _red_since: float | None = None
@@ -99,6 +104,27 @@ def worker_loop(overlay: OverlayWindow,
         psutil.cpu_percent()  # first call always returns 0.0; prime the counter
 
         while not _stop_event.is_set():
+
+            # ---- Pause ----
+            if _pause_event.is_set():
+                time.sleep(0.1)
+                continue
+
+            # ---- Recalibrate ----
+            if _recalibrate_event.is_set():
+                _recalibrate_event.clear()
+                calibrator = Calibrator()
+                calibrator.start()
+                scorer.reset()
+                machine = StateMachine()
+                _prev_state = None
+                if _beep_stop is not None:
+                    _beep_stop.set()
+                    _beep_stop = None
+                _red_since = None
+                overlay.update_calibration(0.0, 0)
+                _log.info("Recalibration started.")
+
             frame, ts = cam.read_frame()
             if frame is None:
                 time.sleep(0.005)
@@ -165,6 +191,7 @@ def worker_loop(overlay: OverlayWindow,
                     baseline = calibrator.baseline
                     machine.set_baseline(baseline)
                     scorer.reset()  # Clear EMA so post-cal tracking is fresh
+                    dashboard.session_started()
                     _log.info("Calibration complete → baseline=%.4f", baseline)
                 continue
 
@@ -173,6 +200,10 @@ def worker_loop(overlay: OverlayWindow,
             fps = cam.actual_fps
 
             overlay.update_posture(state, result.smoothed_score, fps)
+
+            if state != _prev_state:
+                dashboard.add_event(state)
+                _prev_state = state
 
             # ---- RED alert beep (continuous after 8 s in RED) ----
             now = time.monotonic()
@@ -234,9 +265,15 @@ def main():
 
     overlay = OverlayWindow(debug=args.debug, x_offset=args.bar_x)
 
+    dashboard = DashboardWindow(
+        on_recalibrate=lambda: _recalibrate_event.set(),
+        on_pause=lambda paused: _pause_event.set() if paused else _pause_event.clear(),
+        on_stop=lambda: (_stop_event.set(), overlay.close()),
+    )
+
     worker = threading.Thread(
         target=worker_loop,
-        args=(overlay, args.camera, args.debug, args.preview),
+        args=(overlay, dashboard, args.camera, args.debug, args.preview),
         daemon=True,
         name="PostureWorker",
     )
@@ -245,7 +282,7 @@ def main():
 
     try:
         # Blocks on the main thread — required for tkinter
-        overlay.start()
+        overlay.start(on_ready=dashboard.start)
     except KeyboardInterrupt:
         _log.info("Interrupted by user.")
     finally:

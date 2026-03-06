@@ -85,8 +85,12 @@ class OverlayWindow:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self):
-        """Create the Tk root window and enter the main loop."""
+    def start(self, on_ready=None):
+        """Create the Tk root window and enter the main loop.
+
+        on_ready: optional callable(root) invoked once the Tk root exists,
+                  before mainloop — use to create Toplevel windows (e.g. dashboard).
+        """
         self._root = tk.Tk()
         self._screen_w = self._root.winfo_screenwidth()
         self._screen_h = self._root.winfo_screenheight()
@@ -116,6 +120,8 @@ class OverlayWindow:
                 self._dbg_font = tkfont.Font(size=7)
 
         self._schedule_draw()
+        if on_ready:
+            self._root.after(50, lambda: on_ready(self._root))
         logger.info("Overlay window started (%dx%d strip).",
                     BAR_WIDTH, self._screen_h)
         self._root.mainloop()
