@@ -7,11 +7,11 @@ a baseline, and time thresholds.
 States
 ------
 GREEN  : score ≤ baseline_yellow_threshold   (good posture)
-YELLOW : score > yellow for > 15 s           (warning)
-RED    : score > red for > 30 s              (alert)
+YELLOW : score > yellow for > 5 s            (warning)
+RED    : score > red for > 7 s               (alert)
 
 Hysteresis: To return from YELLOW/RED → GREEN the score must
-drop back below the Green threshold for at least 3 seconds.
+drop back below the yellow threshold for at least 2 seconds.
 """
 
 from __future__ import annotations

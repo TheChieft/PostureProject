@@ -1,71 +1,156 @@
 # PostureProject
 
-Webcam-based slouch posture detector for Windows.
-Displays an always-on-top coloured bar on the left edge of the screen.
+Real-time posture monitor for Windows. Uses your webcam and MediaPipe to track
+head position and neck angle, then displays an always-on-top colour bar on the
+left edge of your screen — green when your posture is good, yellow when you've
+been slouching for a while, red when it's gone on too long.
+
+No cloud, no account, no background services. Runs entirely on your machine.
+
+---
+
+## Quick start — Download the .exe
+
+1. Go to [**Releases**](../../releases) and download `PostureProject.zip`
+2. Extract the folder anywhere on your PC
+3. Run `PostureProject.exe` (double-click or from PowerShell):
+
+```powershell
+.\PostureProject.exe
+```
+
+**Requirements:** Windows 10 or 11, a webcam. No Python needed.
 
 ---
 
 ## How it works
 
-1. **Calibration (10 s)** — Sit in a good posture while the blue bar fills up.
-   A baseline score is captured from your landmarks.
-2. **Monitoring** — The bar switches colour based on your posture state:
+### Step 1 — Calibration (~10 seconds)
 
-| Colour             | Meaning                    |
-| ------------------ | -------------------------- |
-| 🟢 Green (narrow)   | Good posture               |
-| 🟡 Yellow (medium)  | Slouching > 15 s — fix it  |
-| 🔴 Red (full width) | Slouching > 30 s — act now |
+A **blue bar** rises from the bottom of the screen. Sit in your best posture and
+hold it while the bar fills up. This captures your personal baseline score.
 
-Returning to good posture for 3 seconds resets the bar to green.
+### Step 2 — Monitoring
+
+After calibration the bar changes colour based on how long you've been slouching:
+
+| Bar | Width | Meaning |
+|---|---|---|
+| 🟢 Green | Narrow | Good posture |
+| 🟡 Yellow | Medium | Slouching for > 5 s — straighten up |
+| 🔴 Red | Full width | Slouching for > 7 s — act now |
+
+After **8 seconds** in Yellow or Red a beep plays on repeat until you sit up
+straight. Returning to good posture for **2 seconds** resets the bar to green.
+
+### Step 3 — Dashboard
+
+A second window opens automatically alongside the bar:
+
+- **Session timer** — elapsed time since calibration finished
+- **Colour timeline** — last 10 minutes of posture history
+- **Stats table** — time and percentage spent in each state
+
+Buttons:
+
+| Button | Action |
+|---|---|
+| Recalibrate | Restart the 10-second baseline capture |
+| Pause | Freeze monitoring (grey segment appears in timeline) |
+| Stop | Close the application |
 
 ---
 
-## Requirements
+## Command-line options
 
-- Windows 11 (x64 Python, tested on ARM Snapdragon X)
-- Python 3.11 x64
-- A webcam visible at index 0
+```powershell
+PostureProject.exe [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--camera N` | `0` | OpenCV camera index (try `1`, `2`… if the wrong camera opens) |
+| `--preview` | off | Show live webcam feed with pose landmark dots (press Q to close) |
+| `--debug` | off | Draw score and FPS as tiny text on the colour bar |
+| `--bar-x N` | `0` | Horizontal pixel offset for the bar — use to place it on a second monitor |
+
+Examples:
+
+```powershell
+# Use a secondary webcam
+.\PostureProject.exe --camera 1
+
+# Place the bar on the right side of a dual-monitor setup
+.\PostureProject.exe --bar-x 1920
+
+# Show the webcam preview while running
+.\PostureProject.exe --preview
+```
 
 ---
 
-## Installation
+## Logs
 
-```bash
-# 1. Clone / copy the project
+Session data is written to a `logs\` folder next to the executable:
+
+```
+PostureProject\
+└── logs\
+    └── posture_20260309_093012.csv
+```
+
+Columns: `timestamp, score, state, fps, hf, neck_angle`
+
+A new file is created every 50,000 rows to keep file sizes manageable.
+
+---
+
+## Building from source
+
+For developers who want to modify the code or rebuild the executable.
+
+### Requirements
+
+- Windows 10 or 11 (x64 or ARM64 / Snapdragon X)
+- [Python 3.11](https://www.python.org/downloads/release/python-3119/) from
+  python.org — **not** the Windows Store version
+- PowerShell (built into Windows)
+
+> If you are developing from WSL, **do not use a virtual environment** when
+> running over a UNC path (`\\wsl.localhost\...`) — activation scripts fail.
+> Install directly into the system Python instead.
+
+### Setup
+
+```powershell
+# 1. Clone the repository
+git clone https://github.com/TheChieft/PostureProject.git
 cd PostureProject
 
-# 2. Create a virtual environment (recommended)
-python -m venv .venv
-.venv\Scripts\activate        # Windows
+# 2. Install Python dependencies
+py -3.11 -m pip install --only-binary :all: -r requirements.txt
 
-# 3. Install dependencies
-pip install -r requirements.txt
+# 3. Download the MediaPipe pose model (~5 MB, not included in the repo)
+py -3.11 download_model.py
 ```
 
-> **Tkinter** ships with the official CPython Windows installer.
-> If it is missing, reinstall Python and tick "tcl/tk and IDLE" in the installer.
+### Running from source
 
----
-
-## Running
-
-```bash
-python main.py
+```powershell
+py -3.11 main.py
+py -3.11 main.py --preview --debug
 ```
 
-Optional flags:
+### Building the .exe
 
-| Flag         | Description                         |
-| ------------ | ----------------------------------- |
-| `--camera N` | Use camera index N (default: 0)     |
-| `--debug`    | Show score/FPS mini-text on the bar |
-
-Example:
-
-```bash
-python main.py --camera 1 --debug
+```powershell
+.\build.ps1
 ```
+
+Output: `dist\PostureProject\PostureProject.exe`
+
+The entire `dist\PostureProject\` folder is self-contained. Copy it to any
+Windows machine — no Python installation needed.
 
 ---
 
@@ -73,86 +158,59 @@ python main.py --camera 1 --debug
 
 ```
 PostureProject/
-├── main.py          # Entry point — integrates all modules
-├── camera.py        # Webcam capture (640x360, ~10 FPS)
-├── pose.py          # MediaPipe Pose wrapper
-├── posture.py       # Posture score computation + EMA
-├── state_machine.py # GREEN / YELLOW / RED state transitions
-├── calibrator.py    # 10-second calibration phase
-├── logger.py        # CSV log writer (logs/ directory)
-├── ui_overlay.py    # Tkinter always-on-top overlay bar
-├── requirements.txt
-└── README.md
+├── main.py              # Entry point — wires all modules, launches worker thread
+├── camera.py            # OpenCV webcam capture (640×360, ~10 FPS)
+├── pose.py              # MediaPipe PoseLandmarker wrapper (Tasks API)
+├── posture.py           # Posture score computation + EMA smoothing
+├── state_machine.py     # GREEN / YELLOW / RED state transitions
+├── calibrator.py        # 10-second baseline calibration
+├── logger.py            # CSV writer (logs/ directory)
+├── ui_overlay.py        # Always-on-top colour bar (Tkinter)
+├── dashboard.py         # Session dashboard window
+├── paths.py             # Path resolution for dev vs frozen .exe
+├── download_model.py    # Downloads pose_landmarker_lite.task from Google
+├── build.ps1            # PowerShell build script (wraps PyInstaller)
+├── PostureProject.spec  # PyInstaller configuration
+└── requirements.txt
 ```
 
 ---
 
-## Posture score formula
+## How the score is calculated
 
 ```
-HF  = (mid_ear_x − mid_shoulder_x) / shoulder_width
-         Head-forward displacement, normalised by shoulder width
-
+HF    = (mid_ear_x − mid_shoulder_x) / shoulder_width   # head-forward offset
 angle = neck vector angle from vertical (degrees)
 
-S   = 0.5 × |HF| + 0.5 × (angle / 90)
-
-Smoothed_S(t) = 0.3 × S(t) + 0.7 × Smoothed_S(t−1)   [EMA]
+S(t)          = 0.5 × |HF| + 0.5 × (angle / 90)
+smoothed_S(t) = 0.3 × S(t) + 0.7 × smoothed_S(t−1)     # EMA, α = 0.3
 ```
 
-### Thresholds vs baseline
+State thresholds are relative to the personal baseline captured during calibration:
 
-| State  | Condition                                   |
-| ------ | ------------------------------------------- |
-| Yellow | `smoothed_S > baseline × 1.15` for > 15 s   |
-| Red    | `smoothed_S > baseline × 1.30` for > 30 s   |
-| Green  | Score back below yellow threshold for > 3 s |
-
----
-
-## Logs
-
-CSV files are written to the `logs/` directory:
-
-```
-logs/posture_20260217_093012.csv
-```
-
-Columns: `timestamp, score, state, fps, hf, neck_angle`
-
-A new file is created every 50 000 rows to keep individual files small.
-
----
-
-## Performance targets
-
-| Metric        | Target         |
-| ------------- | -------------- |
-| FPS           | ≥ 8            |
-| CPU           | < 35 %         |
-| False reds    | < 2 / hour     |
-| Recovery time | < 10 s average |
-
-Achieved via:
-- 640×360 capture resolution
-- MediaPipe `model_complexity=0` (Lite)
-- EMA smoothing reduces jitter
-- CSV logged at 2 Hz (not every frame)
-
----
-
-## Stopping
-
-Press **Ctrl-C** in the terminal, or close the overlay bar window.
-All logs are flushed before exit.
+| Transition | Condition |
+|---|---|
+| GREEN → YELLOW | `smoothed_S > baseline × 1.15` sustained for > 5 s |
+| YELLOW → RED | `smoothed_S > baseline × 1.30` sustained for > 7 s |
+| RED / YELLOW → GREEN | Score below yellow threshold for > 2 s |
+| Beep starts | Still in YELLOW or RED after 8 s |
 
 ---
 
 ## Troubleshooting
 
-| Problem                | Fix                                                                                 |
-| ---------------------- | ----------------------------------------------------------------------------------- |
-| `Cannot open camera 0` | Check another app isn't using the webcam, or try `--camera 1`                       |
-| Mediapipe import error | Ensure Python is x64: `python -c "import platform; print(platform.architecture())"` |
-| Bar not always-on-top  | Some fullscreen apps override `topmost`; minimise them                              |
-| Very high CPU          | Lower FPS in `camera.py` → `TARGET_FPS = 8`                                         |
+| Symptom | Fix |
+|---|---|
+| "Cannot open camera 0" | Another app may be using the webcam. Try `--camera 1`. |
+| No pose detected | Make sure your face and both shoulders are visible. Good lighting helps. |
+| Bar not always-on-top | Some fullscreen apps override topmost windows — minimise them. |
+| High CPU | Lower `TARGET_FPS` in `camera.py` (default ~10). |
+| No beep sound | `winsound` requires audio output. Check Windows volume and speakers/headphones. |
+| Mediapipe import error | Confirm Python is **not** the Windows Store version: `py -3.11 -c "import sys; print(sys.executable)"` |
+
+---
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, educational, and
+non-commercial use. Commercial use requires a separate agreement with the author.

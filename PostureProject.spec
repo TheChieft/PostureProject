@@ -48,7 +48,7 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         # Exclude heavy unused packages to keep bundle smaller
-        "matplotlib",
+        # NOTE: matplotlib must stay — mediapipe.python.solutions.drawing_utils imports it
         "scipy",
         "pandas",
         "notebook",
@@ -72,13 +72,13 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,          # UPX can corrupt mediapipe DLLs — keep off
-    console=False,      # No terminal window (windowed app)
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,          # TODO: add icon.ico here once available
+    icon=None,
 )
 
 coll = COLLECT(

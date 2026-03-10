@@ -15,3 +15,10 @@ logs/
 
 # VS Code
 .vscode/
+
+# PyInstaller build artifacts
+build/
+dist/
+
+# Claude Code instructions (internal dev tool)
+CLAUDE.md
