@@ -83,6 +83,10 @@ def worker_loop(overlay: OverlayWindow,
         overlay.update_calibration(0.0, 0)
         _log.info("Calibration phase started. Hold good posture for 10 s.")
 
+        if preview:
+            _cv2.namedWindow("PostureProject - Preview", _cv2.WINDOW_NORMAL)
+            _cv2.resizeWindow("PostureProject - Preview", 640, 360)
+
         log_interval = 0.5        # Seconds between CSV rows (≈ 2 Hz)
         last_log_time = 0.0
         _prev_state: PostureState | None = None
@@ -90,6 +94,9 @@ def worker_loop(overlay: OverlayWindow,
         # Bad posture beep tracking (YELLOW or RED sustained)
         _bad_since: float | None = None
         _beep_stop: threading.Event | None = None
+
+        # Absence tracking: no landmarks detected for sustained period
+        _no_landmark_since: float | None = None
 
         def _start_beep_loop(stop_event: threading.Event):
             """Beeps repeatedly until stop_event is set."""
@@ -174,8 +181,18 @@ def worker_loop(overlay: OverlayWindow,
                     break
 
             if landmarks is None:
+                # Track absence: after 3 s with no person, go to away state
+                if _no_landmark_since is None:
+                    _no_landmark_since = time.monotonic()
+                elif time.monotonic() - _no_landmark_since >= 3.0:
+                    if _beep_stop is not None:
+                        _beep_stop.set()
+                        _beep_stop = None
+                    _bad_since = None
+                    overlay.update_away()
                 continue
 
+            _no_landmark_since = None  # Person is visible again
             result = scorer.compute(landmarks)
             if result is None:
                 continue

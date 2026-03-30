@@ -59,6 +59,7 @@ class DashboardWindow:
         self._session_start: float | None = None
         self._paused = False
         self._paused_since: float | None = None  # monotonic time when pause started
+        self._total_paused: float = 0.0           # cumulative seconds paused this session
 
         # Tk widgets (created in start())
         self._win: tk.Toplevel | None = None
@@ -77,7 +78,8 @@ class DashboardWindow:
         self._win = tk.Toplevel(root)
         self._win.title("PostureProject — Dashboard")
         self._win.geometry("480x320")
-        self._win.resizable(False, False)
+        self._win.resizable(True, True)
+        self._win.minsize(400, 280)
         self._win.configure(bg=BG)
         self._win.protocol("WM_DELETE_WINDOW", self._on_stop)
         self._build_ui()
@@ -88,6 +90,8 @@ class DashboardWindow:
         with self._lock:
             self._session_start = time.monotonic()
             self._events.clear()
+            self._total_paused = 0.0
+            self._paused_since = None
 
     def add_event(self, state: PostureState) -> None:
         """Thread-safe.  Call from worker on every state transition."""
@@ -95,9 +99,14 @@ class DashboardWindow:
             self._events.append((time.monotonic(), state))
 
     def set_paused(self, paused: bool) -> None:
-        """Thread-safe.  Stores pause start time for timeline rendering."""
+        """Thread-safe. Tracks pause timing for timer and timeline rendering."""
         with self._lock:
-            self._paused_since = time.monotonic() if paused else None
+            if paused:
+                self._paused_since = time.monotonic()
+            else:
+                if self._paused_since is not None:
+                    self._total_paused += time.monotonic() - self._paused_since
+                self._paused_since = None
 
     def close(self) -> None:
         """Destroy the window.  Safe to call from any thread."""
@@ -184,6 +193,8 @@ class DashboardWindow:
         with self._lock:
             events = list(self._events)
             session_start = self._session_start
+            total_paused = self._total_paused
+            paused_since = self._paused_since
 
         # Session timer
         if session_start is None:
@@ -192,15 +203,19 @@ class DashboardWindow:
             self._draw_timeline([], now)
             return
 
-        elapsed = now - session_start
+        # Elapsed time excludes all paused intervals
+        current_pause = (now - paused_since) if paused_since is not None else 0.0
+        elapsed = max(0.0, now - session_start - total_paused - current_pause)
         hh = int(elapsed // 3600)
         mm = int((elapsed % 3600) // 60)
         ss = int(elapsed % 60)
         if self._time_label:
             self._time_label.config(text=f"{hh:02d}:{mm:02d}:{ss:02d}")
 
+        # Stats and timeline stop advancing while paused
+        effective_now = paused_since if paused_since is not None else now
         self._draw_timeline(events, now)
-        self._draw_stats(events, now, elapsed)
+        self._draw_stats(events, effective_now, elapsed)
 
     def _draw_timeline(self, events: list[tuple[float, PostureState]],
                        now: float) -> None:
@@ -248,12 +263,12 @@ class DashboardWindow:
                               fill="#334", font=("Consolas", 6), anchor="nw")
 
     def _draw_stats(self, events: list[tuple[float, PostureState]],
-                    now: float, elapsed: float) -> None:
+                    effective_now: float, elapsed: float) -> None:
         time_in: dict[PostureState, float] = {s: 0.0 for s in PostureState}
         entries: dict[PostureState, int] = {s: 0 for s in PostureState}
 
         for i, (ts, state) in enumerate(events):
-            seg_end = events[i + 1][0] if i + 1 < len(events) else now
+            seg_end = events[i + 1][0] if i + 1 < len(events) else effective_now
             time_in[state] += seg_end - ts
             entries[state] += 1
 

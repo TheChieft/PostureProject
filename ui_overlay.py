@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 # Layout constants
 # ------------------------------------------------------------------
-BAR_WIDTH = 28          # Maximum bar width in pixels
+BAR_WIDTH = 12          # Maximum bar width in pixels
 MARGIN = 0              # Offset from left screen edge
 UPDATE_MS = 80          # Redraw interval (~12 fps UI refresh)
 
@@ -80,6 +80,7 @@ class OverlayWindow:
 
         self._screen_w = 0
         self._screen_h = 0
+        self._away = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -146,6 +147,12 @@ class OverlayWindow:
         self._score = score
         self._fps = fps
         self._calibrating = False
+        self._away = False
+
+    def update_away(self):
+        """Show neutral/absent state when no person is detected for a sustained period."""
+        self._away = True
+        self._calibrating = False
 
     def update_calibration(self, progress: float, sample_count: int):
         """Show calibration progress bar. Thread-safe via after()."""
@@ -173,6 +180,8 @@ class OverlayWindow:
 
         if self._calibrating:
             self._draw_calibration(c, h)
+        elif self._away:
+            self._draw_away(c, h)
         else:
             self._draw_posture_bar(c, h)
 
@@ -190,22 +199,10 @@ class OverlayWindow:
         # Indicator bar
         c.create_rectangle(0, 0, bar_w, h, fill=color, outline="")
 
-        # Subtle state label at top
-        label_map = {
-            PostureState.GREEN:  "▲",
-            PostureState.YELLOW: "!",
-            PostureState.RED:    "✕",
-        }
-        label_color = "white" if self._state == PostureState.RED else "black"
-        try:
-            c.create_text(
-                bar_w // 2, 14,
-                text=label_map[self._state],
-                fill=label_color,
-                font=("Arial", 9, "bold"),
-            )
-        except Exception:
-            pass
+    def _draw_away(self, c: tk.Canvas, h: int):
+        """Dim grey bar when user is not detected (away from camera)."""
+        c.create_rectangle(0, 0, BAR_WIDTH, h, fill="#111122", outline="")
+        c.create_rectangle(0, 0, 3, h, fill="#44446A", outline="")
 
     def _draw_calibration(self, c: tk.Canvas, h: int):
         """Draw blue progress bar filling from bottom upward."""
