@@ -27,7 +27,9 @@ import time
 from camera import Camera
 from calibrator import Calibrator
 from dashboard import DashboardWindow
+from focus_session import FocusSession, Phase
 from logger import PostureLogger
+from mini_widget import MiniWidget
 from pose import PoseDetector
 from posture import PostureScorer
 from state_machine import StateMachine, PostureState
@@ -53,6 +55,8 @@ _pause_event = threading.Event()
 
 def worker_loop(overlay: OverlayWindow,
                 dashboard: DashboardWindow,
+                mini_widget: MiniWidget,
+                focus_session: FocusSession,
                 camera_index: int,
                 debug: bool,
                 preview: bool = False):
@@ -190,6 +194,7 @@ def worker_loop(overlay: OverlayWindow,
                         _beep_stop = None
                     _bad_since = None
                     overlay.update_away()
+                    mini_widget.update_away()
                 continue
 
             _no_landmark_since = None  # Person is visible again
@@ -217,10 +222,14 @@ def worker_loop(overlay: OverlayWindow,
             fps = cam.actual_fps
 
             overlay.update_posture(state, result.smoothed_score, fps)
+            mini_widget.update_posture(state)
 
             if state != _prev_state:
                 dashboard.add_event(state)
                 _prev_state = state
+
+            # ---- Focus session tick (phase auto-transition) ----
+            focus_session.tick()
 
             # ---- Beep: continuous after 8 s in YELLOW or RED ----
             now = time.monotonic()
@@ -255,6 +264,7 @@ def worker_loop(overlay: OverlayWindow,
     if preview:
         _cv2.destroyAllWindows()
     _log.info("Worker thread finished.")
+    mini_widget.close()
     overlay.close()
 
 
@@ -294,9 +304,47 @@ def main():
         on_stop=lambda: (_stop_event.set(), overlay.close()),
     )
 
+    # ── Focus session + mini widget ────────────────────────────────────
+    def _on_phase_change(phase: Phase) -> None:
+        """Play a notification beep when the session phase changes."""
+        try:
+            import winsound as _ws
+            import threading as _t
+            if phase == Phase.BREAK:
+                # Soft ascending tone: break time!
+                def _beep():
+                    _ws.Beep(880, 200)
+                    _ws.Beep(1100, 300)
+                _t.Thread(target=_beep, daemon=True).start()
+            elif phase == Phase.WORK:
+                # Two short tones: back to work
+                def _beep():
+                    _ws.Beep(800, 150)
+                    _ws.Beep(800, 150)
+                _t.Thread(target=_beep, daemon=True).start()
+        except Exception:
+            pass
+
+    focus_session = FocusSession(on_phase_change=_on_phase_change)
+
+    def _show_dashboard() -> None:
+        if dashboard._win:
+            try:
+                dashboard._win.deiconify()
+                dashboard._win.lift()
+                dashboard._win.focus_force()
+            except Exception:
+                pass
+
+    mini_widget = MiniWidget(
+        focus_session=focus_session,
+        on_show_dashboard=_show_dashboard,
+    )
+
     worker = threading.Thread(
         target=worker_loop,
-        args=(overlay, dashboard, args.camera, args.debug, args.preview),
+        args=(overlay, dashboard, mini_widget, focus_session,
+              args.camera, args.debug, args.preview),
         daemon=True,
         name="PostureWorker",
     )
@@ -305,7 +353,11 @@ def main():
 
     try:
         # Blocks on the main thread — required for tkinter
-        overlay.start(on_ready=dashboard.start)
+        def _on_ready(root):
+            dashboard.start(root)
+            mini_widget.start(root)
+
+        overlay.start(on_ready=_on_ready)
     except KeyboardInterrupt:
         _log.info("Interrupted by user.")
     finally:
