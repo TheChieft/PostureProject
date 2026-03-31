@@ -14,6 +14,9 @@ on:
         required: false
         default: "dev"
 
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
     runs-on: windows-latest   # must be Windows for winsound / tkinter / cv2
@@ -109,6 +112,6 @@ jobs:
             dist/PostureProject-v${{ steps.ver.outputs.VERSION }}-portable.zip
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
