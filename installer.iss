@@ -39,8 +39,6 @@ AllowNoIcons=yes
 
 ; Branding
 SetupIconFile=assets\icon.ico
-WizardImageFile=compiler:WizModernImage-IS.bmp
-WizardSmallImageFile=compiler:WizModernSmallImage-IS.bmp
 
 ; Output
 OutputDir=dist
