@@ -67,7 +67,8 @@ class OverlayWindow:
     def __init__(self, debug: bool = False, x_offset: int = 0):
         self.debug = debug
         self._x_offset = x_offset
-        self._root: tk.Tk | None = None
+        self._win: tk.Toplevel | None = None   # Toplevel owned by us
+        self._root: tk.Tk | None = None        # Reference to the shared Tk root
         self._canvas: tk.Canvas | None = None
 
         # Runtime state (updated from main thread via update())
@@ -86,26 +87,27 @@ class OverlayWindow:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def start(self, on_ready=None):
-        """Create the Tk root window and enter the main loop.
+    def show(self, root: tk.Tk) -> None:
+        """Create the overlay Toplevel attached to the shared Tk root.
 
-        on_ready: optional callable(root) invoked once the Tk root exists,
-                  before mainloop — use to create Toplevel windows (e.g. dashboard).
+        Does NOT call mainloop() — the launcher owns that.
+        Must be called from the main thread.
         """
-        self._root = tk.Tk()
-        self._screen_w = self._root.winfo_screenwidth()
-        self._screen_h = self._root.winfo_screenheight()
+        self._root = root
+        self._screen_w = root.winfo_screenwidth()
+        self._screen_h = root.winfo_screenheight()
 
+        self._win = tk.Toplevel(root)
         # Window geometry: narrow strip, full height, at x_offset
-        self._root.geometry(f"{BAR_WIDTH}x{self._screen_h}+{self._x_offset + MARGIN}+0")
-        self._root.overrideredirect(True)        # No title bar
-        self._root.attributes("-topmost", True)  # Always on top
-        self._root.attributes("-alpha", 0.85)    # Slight transparency
-        self._root.configure(bg="black")
-        self._root.resizable(False, False)
+        self._win.geometry(f"{BAR_WIDTH}x{self._screen_h}+{self._x_offset + MARGIN}+0")
+        self._win.overrideredirect(True)        # No title bar
+        self._win.attributes("-topmost", True)  # Always on top
+        self._win.attributes("-alpha", 0.85)    # Slight transparency
+        self._win.configure(bg="black")
+        self._win.resizable(False, False)
 
         self._canvas = tk.Canvas(
-            self._root,
+            self._win,
             width=BAR_WIDTH,
             height=self._screen_h,
             bg="black",
@@ -121,20 +123,16 @@ class OverlayWindow:
                 self._dbg_font = tkfont.Font(size=7)
 
         self._schedule_draw()
-        if on_ready:
-            self._root.after(50, lambda: on_ready(self._root))
-        logger.info("Overlay window started (%dx%d strip).",
-                    BAR_WIDTH, self._screen_h)
-        self._root.mainloop()
+        logger.info("Overlay window shown (%dx%d strip).", BAR_WIDTH, self._screen_h)
 
     def close(self):
-        """Destroy the overlay window."""
-        if self._root:
+        """Destroy the overlay Toplevel."""
+        if self._win:
             try:
-                self._root.after(0, self._root.destroy)
+                self._win.after(0, self._win.destroy)
             except Exception:
                 pass
-            self._root = None
+            self._win = None
         logger.info("Overlay window closed.")
 
     # ------------------------------------------------------------------
@@ -167,8 +165,8 @@ class OverlayWindow:
     def _schedule_draw(self):
         """Schedule the next redraw via tkinter's event loop."""
         self._draw()
-        if self._root:
-            self._root.after(UPDATE_MS, self._schedule_draw)
+        if self._win:
+            self._win.after(UPDATE_MS, self._schedule_draw)
 
     def _draw(self):
         c = self._canvas

@@ -5,22 +5,21 @@ Entry point for the PostureProject application.
 
 Architecture
 ------------
-main thread   → UI (tkinter overlay) — required by tkinter
+main thread   → UI (tkinter — launcher, dashboard, mini-widget)
 worker thread → Camera + MediaPipe + scoring + logging
 
 Flow
 ----
-1. Worker opens camera and pose detector.
-2. Calibration phase (10 s): collect baseline score → set on StateMachine.
-3. Normal loop: read frame → detect landmarks → score → state → log.
-4. Overlay is updated via shared state object (thread-safe writes).
+1. Launcher window lets user pick mode (focus / posture-only) and parameters.
+2. on_start() creates all windows and launches the worker thread.
+3. Worker opens camera, runs calibration, then enters the monitoring loop.
+4. When monitoring ends the worker calls on_done() which brings the launcher back.
 5. Ctrl-C or window close triggers graceful shutdown.
 """
 
 from __future__ import annotations
 import argparse
 import logging
-import sys
 import threading
 import time
 
@@ -28,12 +27,12 @@ from camera import Camera
 from calibrator import Calibrator
 from dashboard import DashboardWindow
 from focus_session import FocusSession, Phase
+from launcher import LauncherWindow
 from logger import PostureLogger
-from mini_widget import MiniWidget
+from mini_widget import MiniWidget, CAM_W, CAM_H
 from pose import PoseDetector
 from posture import PostureScorer
 from state_machine import StateMachine, PostureState
-from ui_overlay import OverlayWindow
 
 # ------------------------------------------------------------------
 # Logging setup
@@ -51,15 +50,17 @@ _log = logging.getLogger("main")
 _stop_event = threading.Event()
 _recalibrate_event = threading.Event()
 _pause_event = threading.Event()
+_camera_event = threading.Event()   # set = camera preview requested
 
 
-def worker_loop(overlay: OverlayWindow,
-                dashboard: DashboardWindow,
+def worker_loop(dashboard: DashboardWindow,
                 mini_widget: MiniWidget,
                 focus_session: FocusSession,
                 camera_index: int,
                 debug: bool,
-                preview: bool = False):
+                preview: bool = False,
+                on_done=None,
+                camera_event: threading.Event | None = None):
     """
     Runs in a background thread.
     Owns Camera, PoseDetector, PostureScorer, Calibrator, StateMachine,
@@ -69,9 +70,11 @@ def worker_loop(overlay: OverlayWindow,
     if not cam.open():
         _log.error("Cannot open camera %d. Exiting.", camera_index)
         _stop_event.set()
-        overlay.close()
+        if on_done:
+            on_done()
         return
 
+    import base64 as _b64
     import cv2 as _cv2
     import psutil
     import winsound
@@ -82,14 +85,29 @@ def worker_loop(overlay: OverlayWindow,
         machine = StateMachine()
         calibrator = Calibrator()
 
-        # Start calibration immediately
-        calibrator.start()
-        overlay.update_calibration(0.0, 0)
-        _log.info("Calibration phase started. Hold good posture for 10 s.")
-
         if preview:
             _cv2.namedWindow("PostureProject - Preview", _cv2.WINDOW_NORMAL)
             _cv2.resizeWindow("PostureProject - Preview", 640, 360)
+
+        # ── Pre-calibration countdown (3 s) ──────────────────────────
+        # Open camera panel so the user can see themselves and sit properly.
+        mini_widget.start_calibration_countdown()
+        _cdown_start = time.monotonic()
+        while time.monotonic() - _cdown_start < 3.0 and not _stop_event.is_set():
+            _remaining = int(3.0 - (time.monotonic() - _cdown_start)) + 1
+            mini_widget.update_calibration_countdown(_remaining)
+            frame_c, _ = cam.read_frame()
+            if frame_c is not None and camera_event and camera_event.is_set():
+                _thumb = _cv2.resize(frame_c, (CAM_W, CAM_H))
+                _rgb   = _cv2.cvtColor(_thumb, _cv2.COLOR_BGR2RGB)
+                _ok, _buf = _cv2.imencode(".png", _rgb, [_cv2.IMWRITE_PNG_COMPRESSION, 1])
+                if _ok:
+                    mini_widget.set_camera_frame(_b64.b64encode(_buf.tobytes()).decode())
+            time.sleep(0.05)
+
+        mini_widget.update_calibration_countdown(0)   # countdown done, starting
+        calibrator.start()
+        _log.info("Calibration phase started. Hold good posture for 10 s.")
 
         log_interval = 0.5        # Seconds between CSV rows (≈ 2 Hz)
         last_log_time = 0.0
@@ -124,16 +142,30 @@ def worker_loop(overlay: OverlayWindow,
             # ---- Recalibrate ----
             if _recalibrate_event.is_set():
                 _recalibrate_event.clear()
-                calibrator = Calibrator()
-                calibrator.start()
-                scorer.reset()
-                machine = StateMachine()
-                _prev_state = None
                 if _beep_stop is not None:
                     _beep_stop.set()
                     _beep_stop = None
                 _bad_since = None
-                overlay.update_calibration(0.0, 0)
+                scorer.reset()
+                machine = StateMachine()
+                _prev_state = None
+                # 3-second countdown before capturing new baseline
+                mini_widget.start_calibration_countdown()
+                _rc_start = time.monotonic()
+                while time.monotonic() - _rc_start < 3.0 and not _stop_event.is_set():
+                    _rem = int(3.0 - (time.monotonic() - _rc_start)) + 1
+                    mini_widget.update_calibration_countdown(_rem)
+                    _f, _ = cam.read_frame()
+                    if _f is not None and camera_event and camera_event.is_set():
+                        _t = _cv2.resize(_f, (CAM_W, CAM_H))
+                        _r = _cv2.cvtColor(_t, _cv2.COLOR_BGR2RGB)
+                        _ok2, _b2 = _cv2.imencode(".png", _r, [_cv2.IMWRITE_PNG_COMPRESSION, 1])
+                        if _ok2:
+                            mini_widget.set_camera_frame(_b64.b64encode(_b2.tobytes()).decode())
+                    time.sleep(0.05)
+                mini_widget.update_calibration_countdown(0)
+                calibrator = Calibrator()
+                calibrator.start()
                 _log.info("Recalibration started.")
 
             frame, ts = cam.read_frame()
@@ -143,7 +175,17 @@ def worker_loop(overlay: OverlayWindow,
 
             landmarks = detector.process(frame)
 
-            # ---- Preview window ----
+            # ---- Camera preview in mini widget ----
+            cam_open = camera_event is not None and camera_event.is_set()
+            if cam_open:
+                # Encode as PNG (RGB) — Tkinter PhotoImage supports PNG natively
+                thumb = _cv2.resize(frame, (CAM_W, CAM_H))
+                rgb   = _cv2.cvtColor(thumb, _cv2.COLOR_BGR2RGB)
+                ok, buf = _cv2.imencode(".png", rgb, [_cv2.IMWRITE_PNG_COMPRESSION, 1])
+                if ok:
+                    mini_widget.set_camera_frame(_b64.b64encode(buf.tobytes()).decode())
+
+            # ---- Preview window (--preview flag) ----
             if preview:
                 display = frame.copy()
                 h_px, w_px = display.shape[:2]
@@ -193,7 +235,6 @@ def worker_loop(overlay: OverlayWindow,
                         _beep_stop.set()
                         _beep_stop = None
                     _bad_since = None
-                    overlay.update_away()
                     mini_widget.update_away()
                 continue
 
@@ -205,15 +246,13 @@ def worker_loop(overlay: OverlayWindow,
             # ---- Calibration phase ----
             if not calibrator.is_done:
                 calibrator.add_sample(result)
-                overlay.update_calibration(
-                    calibrator.progress,
-                    calibrator.sample_count
-                )
+                mini_widget.update_calibration_progress(calibrator.progress)
                 if calibrator.is_done:
                     baseline = calibrator.baseline
                     machine.set_baseline(baseline)
                     scorer.reset()  # Clear EMA so post-cal tracking is fresh
                     dashboard.session_started()
+                    mini_widget.calibration_complete()
                     _log.info("Calibration complete → baseline=%.4f", baseline)
                 continue
 
@@ -221,7 +260,6 @@ def worker_loop(overlay: OverlayWindow,
             state = machine.update(result.smoothed_score)
             fps = cam.actual_fps
 
-            overlay.update_posture(state, result.smoothed_score, fps)
             mini_widget.update_posture(state)
 
             if state != _prev_state:
@@ -265,7 +303,9 @@ def worker_loop(overlay: OverlayWindow,
         _cv2.destroyAllWindows()
     _log.info("Worker thread finished.")
     mini_widget.close()
-    overlay.close()
+
+    if on_done:
+        on_done()
 
 
 def main():
@@ -277,92 +317,102 @@ def main():
         help="OpenCV camera index (default: 0)"
     )
     parser.add_argument(
-        "--debug", action="store_true",
-        help="Show score/FPS overlay on the bar (development mode)"
-    )
-    parser.add_argument(
         "--preview", action="store_true",
         help="Show camera feed window with landmark dots (press Q to quit)"
     )
-    parser.add_argument(
-        "--bar-x", type=int, default=0,
-        help="X pixel offset for the overlay bar (use to place on a second monitor)"
-    )
     args = parser.parse_args()
 
-    overlay = OverlayWindow(debug=args.debug, x_offset=args.bar_x)
+    launcher = LauncherWindow()
 
-    def _on_pause(paused: bool) -> None:
-        if paused:
-            _pause_event.set()
-        else:
-            _pause_event.clear()
+    def _on_start(mode: str, work_secs: int, break_secs: int) -> None:
+        _stop_event.clear()
+        _recalibrate_event.clear()
+        _pause_event.clear()
+        _camera_event.clear()
 
-    dashboard = DashboardWindow(
-        on_recalibrate=lambda: (_recalibrate_event.set(), _pause_event.clear()),
-        on_pause=_on_pause,
-        on_stop=lambda: (_stop_event.set(), overlay.close()),
-    )
-
-    # ── Focus session + mini widget ────────────────────────────────────
-    def _on_phase_change(phase: Phase) -> None:
-        """Play a notification beep when the session phase changes."""
-        try:
-            import winsound as _ws
-            import threading as _t
-            if phase == Phase.BREAK:
-                # Soft ascending tone: break time!
-                def _beep():
-                    _ws.Beep(880, 200)
-                    _ws.Beep(1100, 300)
-                _t.Thread(target=_beep, daemon=True).start()
-            elif phase == Phase.WORK:
-                # Two short tones: back to work
-                def _beep():
-                    _ws.Beep(800, 150)
-                    _ws.Beep(800, 150)
-                _t.Thread(target=_beep, daemon=True).start()
-        except Exception:
-            pass
-
-    focus_session = FocusSession(on_phase_change=_on_phase_change)
-
-    def _show_dashboard() -> None:
-        if dashboard._win:
+        def _on_phase_change(phase: Phase) -> None:
             try:
-                dashboard._win.deiconify()
-                dashboard._win.lift()
-                dashboard._win.focus_force()
+                import winsound as _ws
+                import threading as _t
+                if phase == Phase.BREAK:
+                    def _b():
+                        _ws.Beep(880, 200)
+                        _ws.Beep(1100, 300)
+                    _t.Thread(target=_b, daemon=True).start()
+                elif phase == Phase.WORK:
+                    def _b():
+                        _ws.Beep(800, 150)
+                        _ws.Beep(800, 150)
+                    _t.Thread(target=_b, daemon=True).start()
             except Exception:
                 pass
 
-    mini_widget = MiniWidget(
-        focus_session=focus_session,
-        on_show_dashboard=_show_dashboard,
-    )
+        focus_session = FocusSession(on_phase_change=_on_phase_change)
 
-    worker = threading.Thread(
-        target=worker_loop,
-        args=(overlay, dashboard, mini_widget, focus_session,
-              args.camera, args.debug, args.preview),
-        daemon=True,
-        name="PostureWorker",
-    )
-    worker.start()
-    _log.info("Worker thread launched.")
+        def _on_pause(paused: bool) -> None:
+            dashboard.set_paused(paused)
+            if paused:
+                _pause_event.set()
+            else:
+                _pause_event.clear()
+
+        # Dashboard: data manager only — UI is embedded in mini_widget
+        dashboard = DashboardWindow(
+            on_recalibrate=lambda: (_recalibrate_event.set(), _pause_event.clear()),
+            on_pause=_on_pause,
+            on_stop=lambda: _stop_event.set(),
+        )
+
+        def _on_camera_toggle() -> None:
+            if mini_widget._cam_open:
+                _camera_event.set()
+            else:
+                _camera_event.clear()
+
+        def _on_recalibrate() -> None:
+            _recalibrate_event.set()
+            _pause_event.clear()
+
+        def _on_stop() -> None:
+            _stop_event.set()
+
+        mini_widget = MiniWidget(
+            focus_session=focus_session,
+            dashboard=dashboard,
+            on_camera_toggle=_on_camera_toggle,
+            on_recalibrate=_on_recalibrate,
+            on_pause=_on_pause,
+            on_stop=_on_stop,
+        )
+
+        # Show mini widget immediately; dashboard deferred until 📊 clicked
+        mini_widget.start(launcher.root)
+
+        # Auto-start focus session if mode == "focus"
+        if mode == "focus":
+            focus_session.start(work_secs, break_secs)
+
+        def _on_done() -> None:
+            # Called from worker thread — schedule on main thread
+            launcher.root.after(0, launcher.show)
+
+        worker = threading.Thread(
+            target=worker_loop,
+            args=(dashboard, mini_widget, focus_session,
+                  args.camera, False, args.preview),
+            kwargs={"on_done": _on_done, "camera_event": _camera_event},
+            daemon=True,
+            name="PostureWorker",
+        )
+        worker.start()
+        _log.info("Worker thread launched.")
 
     try:
-        # Blocks on the main thread — required for tkinter
-        def _on_ready(root):
-            dashboard.start(root)
-            mini_widget.start(root)
-
-        overlay.start(on_ready=_on_ready)
+        launcher.start(on_start=_on_start)
     except KeyboardInterrupt:
         _log.info("Interrupted by user.")
     finally:
         _stop_event.set()
-        worker.join(timeout=5.0)
         _log.info("Application exited cleanly.")
 
 

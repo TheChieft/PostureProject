@@ -30,6 +30,8 @@ a = Analysis(
     datas=[
         # Bundled model asset — goes to sys._MEIPASS root
         ("pose_landmarker_lite.task", "."),
+        # App icons (used by installer and future tray icon)
+        ("assets", "assets"),
         *mp_datas,
         *proto_datas,
     ],
@@ -78,7 +80,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon="assets/icon.ico",
+    version="version_info.txt",
 )
 
 coll = COLLECT(

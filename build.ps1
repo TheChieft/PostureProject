@@ -13,20 +13,20 @@ Write-Host "=== PostureProject Build ===" -ForegroundColor Cyan
 Write-Host ""
 
 # Verify Python 3.11 x64
-$pyver = py -3.11-64 -c "import sys; print(sys.version)"
+$pyver = py -3.11 -c "import sys; print(sys.version)"
 Write-Host "Python: $pyver" -ForegroundColor Gray
 
 # Verify model file exists (required to bundle it)
 if (-not (Test-Path "pose_landmarker_lite.task")) {
     Write-Host ""
     Write-Host "ERROR: pose_landmarker_lite.task not found." -ForegroundColor Red
-    Write-Host "Run first:  py -3.11-64 download_model.py" -ForegroundColor Yellow
+    Write-Host "Run first:  py -3.11 download_model.py" -ForegroundColor Yellow
     exit 1
 }
 
 # Install / update PyInstaller
 Write-Host "Checking PyInstaller..." -ForegroundColor Gray
-py -3.11-64 -m pip install pyinstaller --quiet
+py -3.11 -m pip install pyinstaller --quiet
 
 # Clean previous builds
 Write-Host "Cleaning previous build..." -ForegroundColor Gray
@@ -37,7 +37,7 @@ if (Test-Path "dist")  { Remove-Item -Recurse -Force "dist" }
 Write-Host ""
 Write-Host "Building... (this takes 2-5 minutes)" -ForegroundColor Yellow
 Write-Host ""
-py -3.11-64 -m PyInstaller PostureProject.spec --noconfirm
+py -3.11 -m PyInstaller PostureProject.spec --noconfirm
 
 # Result
 Write-Host ""

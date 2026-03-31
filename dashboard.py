@@ -15,6 +15,7 @@ import tkinter as tk
 from typing import Callable
 
 from state_machine import PostureState
+from utils import center_window
 
 # Colours matching the overlay bar
 STATE_COLORS = {
@@ -60,6 +61,7 @@ class DashboardWindow:
         self._paused = False
         self._paused_since: float | None = None  # monotonic time when pause started
         self._total_paused: float = 0.0           # cumulative seconds paused this session
+        self._completed_pauses: list[tuple[float, float]] = []  # (start, end) of each completed pause
 
         # Tk widgets (created in start())
         self._win: tk.Toplevel | None = None
@@ -77,12 +79,12 @@ class DashboardWindow:
         """Create the Toplevel.  Must be called from the main thread."""
         self._win = tk.Toplevel(root)
         self._win.title("PostureProject — Dashboard")
-        self._win.geometry("480x320")
         self._win.resizable(True, True)
         self._win.minsize(400, 280)
         self._win.configure(bg=BG)
         self._win.protocol("WM_DELETE_WINDOW", self._on_stop)
         self._build_ui()
+        center_window(self._win, 480, 320)
         self._schedule_draw()
 
     def session_started(self) -> None:
@@ -92,6 +94,7 @@ class DashboardWindow:
             self._events.clear()
             self._total_paused = 0.0
             self._paused_since = None
+            self._completed_pauses = []
 
     def add_event(self, state: PostureState) -> None:
         """Thread-safe.  Call from worker on every state transition."""
@@ -105,8 +108,10 @@ class DashboardWindow:
                 self._paused_since = time.monotonic()
             else:
                 if self._paused_since is not None:
-                    self._total_paused += time.monotonic() - self._paused_since
-                self._paused_since = None
+                    resume_time = time.monotonic()
+                    self._completed_pauses.append((self._paused_since, resume_time))
+                    self._total_paused += resume_time - self._paused_since
+                    self._paused_since = None
 
     def close(self) -> None:
         """Destroy the window.  Safe to call from any thread."""
@@ -116,6 +121,17 @@ class DashboardWindow:
             except Exception:
                 pass
             self._win = None
+
+    def get_snapshot(self) -> dict:
+        """Thread-safe point-in-time copy of session state for external rendering."""
+        with self._lock:
+            return {
+                "events":           list(self._events),
+                "session_start":    self._session_start,
+                "total_paused":     self._total_paused,
+                "paused_since":     self._paused_since,
+                "completed_pauses": list(self._completed_pauses),
+            }
 
     # ------------------------------------------------------------------
     # UI construction
@@ -228,6 +244,7 @@ class DashboardWindow:
 
         with self._lock:
             paused_since = self._paused_since
+            completed_pauses = list(self._completed_pauses)
 
         # When paused, real segments stop at pause time; grey fills the rest
         effective_now = paused_since if paused_since is not None else now
@@ -244,7 +261,19 @@ class DashboardWindow:
                 c.create_rectangle(x0, 3, x1, H - 3,
                                    fill=STATE_COLORS[state], outline="")
 
-        # Pause segment (grey-blue from pause_start to now)
+        # Draw all completed pause segments as grey rectangles
+        for p_start, p_end in completed_pauses:
+            if p_end < win_start:
+                continue
+            x0 = max(0.0, (p_start - win_start) / TIMELINE_SECONDS * W)
+            x1 = min(float(W), (p_end - win_start) / TIMELINE_SECONDS * W)
+            if x1 > x0:
+                c.create_rectangle(x0, 3, x1, H - 3, fill=PAUSE_COLOR, outline="")
+                if x1 - x0 > 30:
+                    c.create_text((x0 + x1) / 2, H // 2, text="PAUSA",
+                                  fill="#AAA", font=("Consolas", 7, "bold"))
+
+        # Draw the current (active) pause if any
         if paused_since is not None:
             x0 = max(0.0, (paused_since - win_start) / TIMELINE_SECONDS * W)
             x1 = min(float(W), (now - win_start) / TIMELINE_SECONDS * W)
