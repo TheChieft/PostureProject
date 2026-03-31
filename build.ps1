@@ -44,16 +44,36 @@ Write-Host ""
 if (Test-Path "dist\PostureProject\PostureProject.exe") {
     $size = (Get-ChildItem -Recurse "dist\PostureProject" |
              Measure-Object -Property Length -Sum).Sum / 1MB
-    Write-Host "=== Build succeeded ===" -ForegroundColor Green
+    Write-Host "=== PyInstaller succeeded ===" -ForegroundColor Green
+    Write-Host ("  Exe    : dist\PostureProject\PostureProject.exe") -ForegroundColor White
+    Write-Host ("  Size   : {0:F0} MB" -f $size) -ForegroundColor White
     Write-Host ""
-    Write-Host ("  Output : dist\PostureProject\PostureProject.exe") -ForegroundColor White
-    Write-Host ("  Size   : {0:F0} MB (full folder)" -f $size) -ForegroundColor White
+
+    # ── Inno Setup installer ──────────────────────────────────────
+    $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+    if (Test-Path $iscc) {
+        Write-Host "Building installer with Inno Setup..." -ForegroundColor Yellow
+        & $iscc "installer.iss"
+        if ($LASTEXITCODE -eq 0) {
+            $setup = Get-Item "dist\PostureProject-Setup-*.exe" -ErrorAction SilentlyContinue
+            if ($setup) {
+                $setupMB = $setup.Length / 1MB
+                Write-Host ""
+                Write-Host "=== Installer built ===" -ForegroundColor Green
+                Write-Host ("  Installer : " + $setup.Name) -ForegroundColor White
+                Write-Host ("  Size      : {0:F0} MB" -f $setupMB) -ForegroundColor White
+            }
+        } else {
+            Write-Host "Inno Setup failed — installer not created." -ForegroundColor Red
+        }
+    } else {
+        Write-Host "Inno Setup not found — skipping installer." -ForegroundColor DarkYellow
+        Write-Host "Install from: https://jrsoftware.org/isinfo.php" -ForegroundColor Gray
+    }
+
     Write-Host ""
-    Write-Host "To run:" -ForegroundColor Cyan
+    Write-Host "To run directly:" -ForegroundColor Cyan
     Write-Host "  .\dist\PostureProject\PostureProject.exe" -ForegroundColor White
-    Write-Host "  .\dist\PostureProject\PostureProject.exe --preview --bar-x 1920" -ForegroundColor White
-    Write-Host ""
-    Write-Host "To distribute: copy the entire dist\PostureProject\ folder." -ForegroundColor Gray
 } else {
     Write-Host "=== Build FAILED ===" -ForegroundColor Red
     Write-Host "Check the output above for errors." -ForegroundColor Yellow

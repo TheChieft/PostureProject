@@ -147,6 +147,12 @@ class MiniWidget:
         self._win.configure(bg=BG)
         self._win.resizable(False, False)
 
+        # App icon (title bar + taskbar)
+        try:
+            self._win.iconbitmap("assets/icon.ico")
+        except Exception:
+            pass
+
         self._build_ui()
         self._bind_drag_recursive(self._win)
 
@@ -154,7 +160,7 @@ class MiniWidget:
         sw = root.winfo_screenwidth()
         self._win.geometry(f"+{sw - W - 20}+20")
 
-        # Windows-specific: reliable always-on-top + taskbar entry
+        # Windows-specific: reliable always-on-top + taskbar entry + icon
         self._win.after(100, self._setup_windows)
 
         self._schedule_draw()
@@ -171,32 +177,48 @@ class MiniWidget:
     # ── Windows integration ───────────────────────────────────────────
 
     def _setup_windows(self) -> None:
-        """Windows-specific: add widget to taskbar and reinforce topmost."""
+        """Windows-specific: taskbar entry, correct icon, and reliable topmost."""
         if not self._win:
             return
         try:
             import ctypes
+            import ctypes.wintypes as wt
+            import os
+
             GWL_EXSTYLE      = -20
             WS_EX_APPWINDOW  = 0x00040000
             WS_EX_TOOLWINDOW = 0x00000080
-            SW_HIDE = 0
-            SW_SHOW = 5
+            SW_HIDE          = 0
+            SW_SHOW          = 5
+            WM_SETICON       = 0x0080
+            ICON_SMALL       = 0
+            ICON_BIG         = 1
+            IMAGE_ICON       = 1
+            LR_LOADFROMFILE  = 0x0010
 
-            # winfo_id() returns the HWND of the tkinter child frame on Windows;
-            # GetParent gives us the outer Win32 window that owns the taskbar slot.
-            hwnd = self._win.winfo_id()
+            hwnd  = self._win.winfo_id()
             outer = ctypes.windll.user32.GetParent(hwnd) or hwnd
 
-            # Remove ToolWindow style (hides from taskbar), add AppWindow style
+            # ── Taskbar visibility ──────────────────────────────────
             style = ctypes.windll.user32.GetWindowLongW(outer, GWL_EXSTYLE)
             style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
             ctypes.windll.user32.SetWindowLongW(outer, GWL_EXSTYLE, style)
-
-            # A hide/show cycle is required for the taskbar change to take effect
             ctypes.windll.user32.ShowWindow(outer, SW_HIDE)
             ctypes.windll.user32.ShowWindow(outer, SW_SHOW)
 
-            # SetWindowPos with HWND_TOPMOST is more reliable than tkinter's -topmost
+            # ── Load and apply icon to taskbar entry ────────────────
+            ico_path = os.path.abspath("assets/icon.ico")
+            if os.path.exists(ico_path):
+                hicon_big = ctypes.windll.user32.LoadImageW(
+                    None, ico_path, IMAGE_ICON, 32, 32, LR_LOADFROMFILE
+                )
+                hicon_small = ctypes.windll.user32.LoadImageW(
+                    None, ico_path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE
+                )
+                ctypes.windll.user32.SendMessageW(outer, WM_SETICON, ICON_BIG,   hicon_big)
+                ctypes.windll.user32.SendMessageW(outer, WM_SETICON, ICON_SMALL, hicon_small)
+
+            # ── Native always-on-top ────────────────────────────────
             HWND_TOPMOST = -1
             SWP_NOMOVE   = 0x0002
             SWP_NOSIZE   = 0x0001
@@ -204,7 +226,7 @@ class MiniWidget:
                 outer, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE
             )
         except Exception:
-            pass   # Non-Windows or permission issue — tkinter fallback is in place
+            pass   # Non-Windows or permission issue — tkinter fallback in place
 
     def _schedule_keep_top(self) -> None:
         """Periodically re-assert always-on-top in case another window took it."""

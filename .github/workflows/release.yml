@@ -1,0 +1,114 @@
+name: Build & Release
+
+# Triggers:
+#   Push a version tag:  git tag v1.1.0 && git push --tags
+#   Manual run from GitHub Actions UI (for testing without a tag)
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 1.1.0)"
+        required: false
+        default: "dev"
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest   # must be Windows for winsound / tkinter / cv2
+
+    steps:
+      # ── 1. Source ───────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Version ──────────────────────────────────────────────────
+      - name: Extract version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          fi
+
+      # ── 3. Python 3.11 x64 ─────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      # ── 4. Python dependencies ──────────────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --only-binary :all: -r requirements.txt
+          pip install pyinstaller
+
+      # ── 5. MediaPipe model (not tracked in git) ─────────────────────
+      - name: Download MediaPipe pose model
+        run: python download_model.py
+
+      # ── 6. PyInstaller — build the .exe ────────────────────────────
+      - name: Build executable with PyInstaller
+        run: python -m PyInstaller PostureProject.spec --noconfirm
+
+      # ── 7. Inno Setup — build the installer ────────────────────────
+      - name: Build Windows installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          $ver  = "${{ steps.ver.outputs.VERSION }}"
+          & $iscc installer.iss /DMyAppVersion=$ver
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+
+      # ── 8. Portable ZIP ─────────────────────────────────────────────
+      - name: Build portable ZIP
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.VERSION }}"
+          Compress-Archive `
+            -Path "dist\PostureProject\*" `
+            -DestinationPath "dist\PostureProject-v$ver-portable.zip"
+
+      # ── 9. List artifacts (debug) ────────────────────────────────────
+      - name: Show build artifacts
+        shell: pwsh
+        run: Get-ChildItem dist\ | Select-Object Name, Length
+
+      # ── 10. Publish GitHub Release ───────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "PostureProject v${{ steps.ver.outputs.VERSION }}"
+          tag_name: ${{ github.ref_name }}
+          body: |
+            ## PostureProject v${{ steps.ver.outputs.VERSION }}
+
+            ### Instalación (recomendada)
+            Descarga **PostureProject-Setup-v${{ steps.ver.outputs.VERSION }}.exe** y ejecútalo.
+
+            ### Portátil (sin instalación)
+            Descarga el ZIP, extráelo y ejecuta `PostureProject.exe`.
+
+            ### Requisitos
+            - Windows 10 (1809) o Windows 11
+            - Webcam integrada o USB
+            - Arquitectura x64
+
+            ### Privacidad
+            Todo el procesamiento es **100% local**. No se envían datos a ningún servidor.
+
+            ---
+            *Revisa el [CHANGELOG](https://github.com/TheChieft/PostureProject/blob/main/CHANGELOG.md) para ver todos los cambios.*
+          files: |
+            dist/PostureProject-Setup-v${{ steps.ver.outputs.VERSION }}.exe
+            dist/PostureProject-v${{ steps.ver.outputs.VERSION }}-portable.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
